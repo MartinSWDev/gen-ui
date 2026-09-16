@@ -195,6 +195,97 @@ async function hackernews(): Promise<Fetched> {
   }
 }
 
+// ---------- Ask tab datasets: richer snapshots that many different questions can be asked of ----------
+
+type OpenMeteoCity = {
+  current: { temperature_2m: number; apparent_temperature: number; relative_humidity_2m: number; weather_code: number; wind_speed_10m: number; is_day: number }
+  hourly: { temperature_2m: number[]; precipitation_probability: number[] }
+}
+
+export async function worldWeather(): Promise<unknown> {
+  const url =
+    `https://api.open-meteo.com/v1/forecast?latitude=${CITIES.map((c) => c.lat).join(",")}&longitude=${CITIES.map((c) => c.lon).join(",")}` +
+    "&current=temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,wind_speed_10m,is_day" +
+    "&hourly=temperature_2m,precipitation_probability&forecast_hours=12&timezone=auto"
+  const results = await getJson<OpenMeteoCity[]>(url)
+
+  const cities = results.map(({ current, hourly }, i) => ({
+    city: CITIES[i].name,
+    country: CITIES[i].country,
+    conditions: WEATHER_CODES[current.weather_code] ?? `Weather code ${current.weather_code}`,
+    temperature_c: current.temperature_2m,
+    feels_like_c: current.apparent_temperature,
+    humidity_percent: current.relative_humidity_2m,
+    wind_kmh: current.wind_speed_10m,
+    chance_of_rain_percent: Math.max(...hourly.precipitation_probability),
+    is_daytime: current.is_day === 1,
+    next_12h_temperature_c: hourly.temperature_2m,
+  }))
+
+  const warnings = cities.flatMap((c) => [
+    ...(c.chance_of_rain_percent >= 80 ? [`High chance of rain in ${c.city} over the next 12 hours`] : []),
+    ...(c.wind_kmh >= 40 ? [`Strong winds in ${c.city} (${Math.round(c.wind_kmh)} km/h)`] : []),
+    ...(c.temperature_c >= 35 ? [`Extreme heat in ${c.city} (${c.temperature_c}°C)`] : []),
+    ...(c.temperature_c <= -10 ? [`Extreme cold in ${c.city} (${c.temperature_c}°C)`] : []),
+  ])
+
+  return {
+    title: "World weather",
+    updated_at: new Date().toISOString(),
+    ...(warnings.length > 0 && { warnings }),
+    cities,
+  }
+}
+
+// [time, open, high, low, close, vwap, volume, count]
+type Candle = [number, string, string, string, string, string, string, number]
+type KrakenOhlc = { result: Record<string, Candle[] | number> }
+
+const MARKET = [
+  { pair: "XBTUSD", coin: "Bitcoin", symbol: "BTC" },
+  { pair: "ETHUSD", coin: "Ethereum", symbol: "ETH" },
+  { pair: "SOLUSD", coin: "Solana", symbol: "SOL" },
+  { pair: "XRPUSD", coin: "XRP", symbol: "XRP" },
+  { pair: "XDGUSD", coin: "Dogecoin", symbol: "DOGE" },
+  { pair: "ADAUSD", coin: "Cardano", symbol: "ADA" },
+]
+
+export async function cryptoMarket(): Promise<unknown> {
+  const coins = await Promise.all(
+    MARKET.map(async ({ pair, coin, symbol }) => {
+      const { result } = await getJson<KrakenOhlc>(`https://api.kraken.com/0/public/OHLC?pair=${pair}&interval=60`)
+      const candles = Object.entries(result).find(([k]) => k !== "last")![1] as Candle[]
+      const day = candles.slice(-24)
+      const closes = day.map((c) => Number(c[4]))
+      const price = closes.at(-1)!
+      const open = Number(day[0][1])
+      return {
+        coin,
+        symbol,
+        price_usd: price,
+        change_24h_percent: Math.round(((price - open) / open) * 10_000) / 100,
+        high_24h_usd: Math.max(...day.map((c) => Number(c[2]))),
+        low_24h_usd: Math.min(...day.map((c) => Number(c[3]))),
+        volume_24h_usd: Math.round(day.reduce((sum, c) => sum + Number(c[6]) * Number(c[4]), 0)),
+        last_24h_prices_usd: closes,
+      }
+    }),
+  )
+  const biggestDrop = coins.reduce((min, c) => (c.change_24h_percent < min.change_24h_percent ? c : min))
+  const biggestMove = coins.reduce((max, c) => (Math.abs(c.change_24h_percent) > Math.abs(max.change_24h_percent) ? c : max))
+  const sign = biggestMove.change_24h_percent >= 0 ? "+" : ""
+  return {
+    title: "Crypto market",
+    exchange: "Kraken",
+    updated_at: new Date().toISOString(),
+    summary: `Biggest mover: ${biggestMove.coin} ${sign}${biggestMove.change_24h_percent}% in 24 hours`,
+    ...(biggestDrop.change_24h_percent <= -5 && {
+      warnings: [`${biggestDrop.coin} is down ${Math.abs(biggestDrop.change_24h_percent)}% in 24 hours`],
+    }),
+    coins,
+  }
+}
+
 const FETCHERS: Record<LiveSourceId, (tick: number) => Promise<Fetched>> = {
   weather,
   earthquakes,

@@ -1,8 +1,9 @@
 "use client"
 
 import * as React from "react"
-import { Blocks, LayoutTemplate, Loader2, Play, Radio, Timer, type LucideIcon } from "lucide-react"
+import { Blocks, LayoutTemplate, Loader2, Play, Radio, Sparkles, Timer, type LucideIcon } from "lucide-react"
 
+import { AskPanel } from "@/components/ask-panel"
 import { ComposeOutput, averageConfidence, type ComposeOverrides, type ComposeResult } from "@/components/compose-output"
 import { LivePanel } from "@/components/live-panel"
 import { TemplatesOutput, type TemplateResult } from "@/components/templates-output"
@@ -21,13 +22,21 @@ import { SAMPLES } from "@/lib/samples"
 import { analyze } from "@/lib/shape"
 import { cn } from "@/lib/utils"
 
-type Mode = "templates" | "compose" | "live"
+type Mode = "ask" | "templates" | "compose" | "live"
 /** Tabs driven by the shared JSON input */
-type InputMode = Exclude<Mode, "live">
+type InputMode = Exclude<Mode, "ask" | "live">
 
 const ENDPOINTS: Record<InputMode, string> = { templates: "/api/decide", compose: "/api/compose" }
 
 const MODES: Record<Mode, { label: string; icon: LucideIcon; summary: string; bestFor: string }> = {
+  ask: {
+    label: "Ask",
+    icon: Sparkles,
+    summary:
+      "Ask a question about live weather or crypto data and Jev redesigns the page to answer it as you type: which fields to show and how, what to focus on, how to sort, and the colour theme. " +
+      "Every answer is a single Jev call over the same data, and only the question changes.",
+    bestFor: "Seeing decision speed you can feel. Click the suggestions or type your own question.",
+  },
   templates: {
     label: "Page templates",
     icon: LayoutTemplate,
@@ -80,7 +89,7 @@ function percentile(values: number[], p: number) {
 const ms = (v: number | undefined) => (v === undefined ? "—" : `${Math.round(v)} ms`)
 
 export function Playground() {
-  const [mode, setMode] = React.useState<Mode>("templates")
+  const [mode, setMode] = React.useState<Mode>("ask")
   const [text, setText] = React.useState(() => stringify(SAMPLES[0].data))
   const [intent, setIntent] = React.useState(SAMPLES[0].intent)
   const [templateResult, setTemplateResult] = React.useState<TemplateResult | null>(null)
@@ -164,7 +173,7 @@ export function Playground() {
   }
 
   async function run(times: number) {
-    if (busy || !parsed.ok || mode === "live") return
+    if (busy || !parsed.ok || mode === "live" || mode === "ask") return
     const runMode = mode
     setBusy({ done: 0, total: times })
     for (let i = 0; i < times; i++) {
@@ -197,7 +206,7 @@ export function Playground() {
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Jev UI picker</h1>
           <p className="text-sm text-muted-foreground">
-            Paste JSON. Jev decides how to show it in one call, and the app renders the decision with shadcn/ui.
+            Jev from TypeSafe decides how to show data in one fast call, and the app renders its decisions with shadcn/ui.
           </p>
         </div>
         <Badge variant="outline" className="font-mono">{last?.model ?? "jev-latest"}</Badge>
@@ -223,12 +232,16 @@ export function Playground() {
         </div>
       </div>
 
-      {/* Kept mounted so the feed and its history survive tab switches; it only ticks while visible. */}
+      {/* Ask and Live stay mounted so their state survives tab switches; they only call Jev while visible. */}
+      <TabsContent value="ask" forceMount className="data-[state=inactive]:hidden">
+        <AskPanel active={mode === "ask"} />
+      </TabsContent>
+
       <TabsContent value="live" forceMount className="data-[state=inactive]:hidden">
         <LivePanel active={mode === "live"} />
       </TabsContent>
 
-      <div className={cn("grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]", mode === "live" && "hidden")}>
+      <div className={cn("grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]", (mode === "live" || mode === "ask") && "hidden")}>
         {/* ---------- input column, shared by both tabs ---------- */}
         <div className="flex flex-col gap-6 lg:sticky lg:top-6">
           <Card>

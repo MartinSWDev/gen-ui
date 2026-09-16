@@ -11,11 +11,12 @@ import {
   COMPONENTS,
   LAYOUTS,
   componentsFor,
+  viewDecisions,
   type ComponentId,
   type ComposeResponse,
   type LayoutId,
-  type RegionId,
 } from "@/lib/compose"
+import { THEMES } from "@/lib/themes"
 import { cn } from "@/lib/utils"
 
 export type ComposeResult = ComposeResponse & { clientMs: number; data: unknown; inputLabel: string }
@@ -38,13 +39,9 @@ export function ComposeOutput({
   overrides: ComposeOverrides
   onOverrides: (next: ComposeOverrides) => void
 }) {
-  const layout = overrides.layout ?? (result.layout.choice as LayoutId)
-  const picks = Object.fromEntries(
-    result.nodes.map((n) => [n.path, overrides.picks[n.path] ?? (n.component.choice as ComponentId)]),
-  )
-  const regions = Object.fromEntries(
-    result.nodes.filter((n) => n.region).map((n) => [n.path, n.region!.choice as RegionId]),
-  )
+  const decisions = viewDecisions(result)
+  const layout = overrides.layout ?? decisions.layout
+  const picks = { ...decisions.picks, ...overrides.picks }
   const visible = result.nodes.filter((n) => picks[n.path] !== "hidden").length
   const edited = overrides.layout !== undefined || Object.keys(overrides.picks).length > 0
 
@@ -55,6 +52,7 @@ export function ComposeOutput({
           <CardTitle>Composed page</CardTitle>
           <CardDescription>
             {visible} components from {result.nodes.length} fields · {LAYOUTS[layout].label} layout
+            {decisions.theme && ` · ${THEMES[decisions.theme].label} theme`}
           </CardDescription>
           <CardAction>
             {edited ? (
@@ -67,7 +65,7 @@ export function ComposeOutput({
           </CardAction>
         </CardHeader>
         <CardContent>
-          <ComposedView data={result.data} layout={layout} picks={picks} regions={regions} />
+          <ComposedView data={result.data} {...decisions} layout={layout} picks={picks} />
         </CardContent>
       </Card>
 

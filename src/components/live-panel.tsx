@@ -37,7 +37,7 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Spinner } from "@/components/ui/spinner"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group"
-import { LAYOUTS, type ComponentId, type LayoutId, type RegionId } from "@/lib/compose"
+import { LAYOUTS, viewDecisions, type LayoutId } from "@/lib/compose"
 import { LIVE_SOURCES, LIVE_SOURCE_IDS, type LiveResponse, type LiveSourceId } from "@/lib/live-sources"
 import { cn } from "@/lib/utils"
 
@@ -414,8 +414,6 @@ function LiveView({ tick, isLatest, onBackToLatest }: { tick: Tick; isLatest: bo
   const Icon = SOURCE_ICONS[tick.source]
   const source = LIVE_SOURCES[tick.source]
   const { compose } = tick
-  const picks = Object.fromEntries(compose.nodes.map((n) => [n.path, n.component.choice as ComponentId]))
-  const regions = Object.fromEntries(compose.nodes.filter((n) => n.region).map((n) => [n.path, n.region!.choice as RegionId]))
   const parts = compose.nodes.filter((n) => n.component.choice !== "hidden").length
 
   return (
@@ -451,7 +449,7 @@ function LiveView({ tick, isLatest, onBackToLatest }: { tick: Tick; isLatest: bo
         </div>
 
         <div key={tick.n} className="animate-in duration-500 fade-in-0 slide-in-from-bottom-2">
-          <ComposedView data={tick.data} layout={compose.layout.choice as LayoutId} picks={picks} regions={regions} />
+          <ComposedView data={tick.data} {...viewDecisions(compose)} />
         </div>
 
         <Collapsible>

@@ -105,13 +105,29 @@ export function badgeVariant(value: unknown): "default" | "secondary" | "destruc
 
 const isIdField = (name: string) => /(^|_)id$/i.test(name)
 
-export function Value({ value, isStatus }: { value: unknown; isStatus?: boolean }) {
+/** Tiny inline trend line for number arrays, coloured by the page theme. */
+export function Sparkline({ values, className }: { values: number[]; className?: string }) {
+  if (values.length < 2) return null
+  const min = Math.min(...values)
+  const range = Math.max(...values) - min || 1
+  const points = values.map((v, i) => `${(i / (values.length - 1)) * 100},${28 - ((v - min) / range) * 24}`).join(" ")
+  return (
+    <svg viewBox="0 0 100 30" preserveAspectRatio="none" className={cn("h-6 w-24", className)} aria-hidden>
+      <polyline points={points} fill="none" stroke="var(--chart-1)" strokeWidth={2} vectorEffect="non-scaling-stroke" />
+    </svg>
+  )
+}
+
+export function Value({ value, isStatus, toneClassName }: { value: unknown; isStatus?: boolean; toneClassName?: string }) {
   if (value === null || value === undefined || value === "") return <span className="text-muted-foreground">—</span>
   if (isStatus || typeof value === "boolean") {
     const text = typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)
     return <Badge variant={badgeVariant(value)}>{text}</Badge>
   }
-  if (typeof value === "number") return <span className="tabular-nums">{full.format(value)}</span>
+  if (typeof value === "number") return <span className={cn("tabular-nums", toneClassName)}>{full.format(value)}</span>
+  if (Array.isArray(value) && value.length > 1 && value.every((v) => typeof v === "number")) {
+    return <Sparkline values={value} className="inline-block align-middle" />
+  }
   if (typeof value === "string") {
     return /^\d{4}-\d{2}(-\d{2})?(T|$)/.test(value) ? <span className="tabular-nums">{formatDate(value)}</span> : <>{value}</>
   }
@@ -200,9 +216,9 @@ function StatCards({ shape, bindings }: { shape: Shape; bindings: Bindings }) {
         <Card key={i} size="sm">
           <CardHeader>
             <CardDescription>{s.label}</CardDescription>
-            <CardTitle className="text-2xl font-semibold tabular-nums">
+<p className="text-2xl font-semibold tracking-tight tabular-nums">
               {typeof s.value === "number" ? formatStat(s.value) : <Value value={s.value} />}
-            </CardTitle>
+            </p>
           </CardHeader>
         </Card>
       ))}
@@ -210,7 +226,18 @@ function StatCards({ shape, bindings }: { shape: Shape; bindings: Bindings }) {
   )
 }
 
-export function DataTable({ rows, fields, status }: { rows: Row[]; fields: Field[]; status?: string }) {
+export function DataTable({
+  rows,
+  fields,
+  status,
+  toneFor,
+}: {
+  rows: Row[]
+  fields: Field[]
+  status?: string
+  /** Colour class for a cell, e.g. green for a positive price change */
+  toneFor?: (field: string, value: unknown) => string | undefined
+}) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table>
@@ -231,7 +258,7 @@ export function DataTable({ rows, fields, status }: { rows: Row[]; fields: Field
                   {isIdField(f.name) ? (
                     <span className="font-mono text-xs">{String(row[f.name] ?? "")}</span>
                   ) : (
-                    <Value value={row[f.name]} isStatus={f.name === status} />
+                    <Value value={row[f.name]} isStatus={f.name === status} toneClassName={toneFor?.(f.name, row[f.name])} />
                   )}
                 </TableCell>
               ))}

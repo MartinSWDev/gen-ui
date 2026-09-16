@@ -2,7 +2,8 @@
 // for each node (plus a page region for top-level fields) in one call.
 
 import type { ChoiceAnswer } from "@/lib/displays"
-import { isPlainObject } from "@/lib/shape"
+import { isPlainObject, type Row } from "@/lib/shape"
+import type { ThemeId, ToneId } from "@/lib/themes"
 
 export type NodeKind = "text" | "number" | "boolean" | "text_list" | "number_list" | "object" | "object_list"
 
@@ -14,6 +15,8 @@ export type ComposeNode = {
   kind: NodeKind
   example: string
   topLevel: boolean
+  /** Number of values, for lists */
+  length?: number
 }
 
 type ComponentSpec = { label: string; kinds: readonly NodeKind[]; description: string }
@@ -33,7 +36,7 @@ export const COMPONENTS = {
   },
   alert: {
     label: "Alert",
-    kinds: ["text", "boolean"],
+    kinds: ["text", "boolean", "text_list"],
     description: "An important warning the reader must not miss, such as a safety, outage, or severe weather notice",
   },
   badge: { label: "Badge", kinds: ["text", "boolean"], description: "A short status, category, or label worth highlighting" },
@@ -115,11 +118,30 @@ export const REGIONS = {
 
 export type RegionId = keyof typeof REGIONS
 
-export type ComposedNode = ComposeNode & { component: ChoiceAnswer; region?: ChoiceAnswer }
+export type ComposedNode = ComposeNode & {
+  component: ChoiceAnswer
+  region?: ChoiceAnswer
+  tone?: ChoiceAnswer
+  /** For number series: how much of the series to show, e.g. first_3 */
+  window?: ChoiceAnswer
+}
+
+/** How Jev narrowed a top-level list for the user's question. */
+export type ListDecision = {
+  path: string
+  /** Item field whose values name each item, e.g. "city" */
+  labelKey: string | null
+  /** Probability that the question names each item, from one yes/no question per item */
+  mentions: Record<string, number>
+  sort: ChoiceAnswer | null
+  limit: ChoiceAnswer
+}
 
 export type ComposeResponse = {
   model: string
   layout: ChoiceAnswer
+  theme: ChoiceAnswer
+  lists: ListDecision[]
   nodes: ComposedNode[]
   questionCount: number
   usage: { input_tokens: number; output_tokens: number }
@@ -160,7 +182,15 @@ export function collectNodes(root: unknown): ComposeNode[] {
     if (!kind || nodes.length >= MAX_NODES) return
     // The root object is the page itself, not a node.
     if (!(depth === 0 && kind === "object")) {
-      nodes.push({ path, key, depth, kind, example: preview(value), topLevel: depth === 1 })
+      nodes.push({
+        path,
+        key,
+        depth,
+        kind,
+        example: preview(value),
+        topLevel: depth === 1,
+        ...(Array.isArray(value) && { length: value.length }),
+      })
     }
     if (depth >= MAX_DEPTH) return
 
@@ -176,4 +206,105 @@ export function collectNodes(root: unknown): ComposeNode[] {
 
   visit(root, "", "", 0)
   return nodes
+}
+
+export const ORIGINAL_ORDER = "original"
+export const FOCUS_THRESHOLD = 0.5
+
+export const LIMITS = {
+  all: "Show every item",
+  top_5: "Only the top 5 items",
+  top_3: "Only the top 3 items",
+  top_1: "Only the single best match",
+} as const
+
+/** The field that names each item in a list, used to offer focus options. */
+export function labelKeyOf(items: Row[]): string | null {
+  const keys = Object.keys(items[0] ?? {}).filter((k) => typeof items[0][k] === "string")
+  return keys.find((k) => /name|title|city|coin|label|article|place/i.test(k)) ?? keys[0] ?? null
+}
+
+/** Turns a list's decisions into what the page does with them. */
+export function resolveList(list: ListDecision) {
+  const named = Object.entries(list.mentions)
+    .filter(([, p]) => p >= FOCUS_THRESHOLD)
+    .map(([label]) => label)
+  const [sortKey, dir] = (list.sort?.choice ?? ORIGINAL_ORDER).split(":")
+  const sorted = sortKey !== ORIGINAL_ORDER
+  const limits: Record<keyof typeof LIMITS, number> = { all: Infinity, top_5: 5, top_3: 3, top_1: 1 }
+  const limit = limits[list.limit.choice as keyof typeof LIMITS] ?? Infinity
+  return {
+    // Items the question names ("Tokyo and London") define the set. Questions like "coldest" name
+    // nothing, so sort and limit pick the answer from real values in code.
+    focus: named,
+    sort: sorted ? { key: sortKey, dir: dir === "asc" ? ("asc" as const) : ("desc" as const) } : null,
+    limit: named.length > 0 ? Infinity : limit,
+  }
+}
+
+/** Applies Jev's focus, sort, and limit picks to the document before it renders. */
+export function applyListDecisions(data: unknown, lists: ListDecision[]): unknown {
+  if (!isPlainObject(data) || lists.length === 0) return data
+  const out: Row = { ...data }
+  for (const list of lists) {
+    if (!Array.isArray(out[list.path])) continue
+    let items = [...(out[list.path] as Row[])]
+    const { focus, sort, limit } = resolveList(list)
+
+    if (focus.length > 0 && list.labelKey) {
+      const match = items.filter((item) => focus.includes(String(item[list.labelKey!])))
+      if (match.length > 0) items = match
+    }
+    if (sort) {
+      items.sort((a, b) => (Number(a[sort.key]) - Number(b[sort.key])) * (sort.dir === "asc" ? 1 : -1))
+    }
+    out[list.path] = items.slice(0, limit)
+  }
+  return out
+}
+
+/** Options for how much of a number series to show. */
+export function windowOptions(length: number): Record<string, string> {
+  const sizes = [1, 3, 6, 12].filter((n) => n < length)
+  return {
+    all: `All ${length} values`,
+    ...Object.fromEntries(
+      sizes.flatMap((n) => [
+        [`first_${n}`, `The first ${n} values, such as the next ${n} hours of a forecast`],
+        [`last_${n}`, `The last ${n} values, such as the most recent ${n} hours of a history`],
+      ]),
+    ),
+  }
+}
+
+/** [start, end) indices for a window choice like "first_3". */
+export function windowRange(length: number, choice: string | undefined): [number, number] {
+  const match = choice?.match(/^(first|last)_(\d+)$/)
+  if (!match) return [0, length]
+  const n = Math.min(Number(match[2]), length)
+  return match[1] === "first" ? [0, n] : [length - n, length]
+}
+
+/** Everything ComposedView needs from a response, keyed by field path. */
+export function viewDecisions(r: ComposeResponse) {
+  return {
+    layout: r.layout.choice as LayoutId,
+    theme: r.theme?.choice as ThemeId | undefined,
+    lists: r.lists ?? [],
+    picks: Object.fromEntries(r.nodes.map((n) => [n.path, n.component.choice as ComponentId])),
+    regions: Object.fromEntries(r.nodes.filter((n) => n.region).map((n) => [n.path, n.region!.choice as RegionId])),
+    tones: Object.fromEntries(r.nodes.filter((n) => n.tone).map((n) => [n.path, n.tone!.choice as ToneId])),
+    windows: Object.fromEntries(r.nodes.filter((n) => n.window).map((n) => [n.path, n.window!.choice])),
+    // Jev's best visible option for each field it hid, used if a page would otherwise be empty.
+    alternatives: Object.fromEntries(
+      r.nodes
+        .filter((n) => n.component.choice === "hidden")
+        .map((n) => {
+          const [best] = Object.entries(n.component.probabilities)
+            .filter(([id]) => id !== "hidden")
+            .sort((a, b) => b[1] - a[1])
+          return [n.path, (best?.[0] ?? "hidden") as ComponentId]
+        }),
+    ),
+  }
 }
