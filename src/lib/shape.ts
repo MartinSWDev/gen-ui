@@ -90,16 +90,16 @@ export function analyze(data: unknown): Shape {
 }
 
 /** Shrinks a value so the model sees its structure without paying for the whole payload. */
-export function truncate(v: unknown, depth = 0): JsonValue {
+export function truncate(v: unknown, depth = 0, maxDepth = 2): JsonValue {
   if (typeof v === "string") return v.length > 80 ? `${v.slice(0, 80)}…` : v
   if (Array.isArray(v)) {
-    if (depth >= 2) return `[${v.length} items]`
-    const head = v.slice(0, 3).map((item) => truncate(item, depth + 1))
+    if (depth >= maxDepth) return `[${v.length} items]`
+    const head = v.slice(0, 3).map((item) => truncate(item, depth + 1, maxDepth))
     return v.length > 3 ? [...head, `…${v.length - 3} more`] : head
   }
   if (isPlainObject(v)) {
-    if (depth >= 2) return `{${Object.keys(v).length} fields}`
-    return Object.fromEntries(Object.entries(v).map(([k, val]) => [k, truncate(val, depth + 1)]))
+    if (depth >= maxDepth) return `{${Object.keys(v).length} fields}`
+    return Object.fromEntries(Object.entries(v).map(([k, val]) => [k, truncate(val, depth + 1, maxDepth)]))
   }
   return v === undefined ? null : (v as JsonValue)
 }

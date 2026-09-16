@@ -1,12 +1,10 @@
-import { APIError, TypeSafeClient, TypeSafeError, choice, type ChoiceQuestion, type Questions } from "@typesafe-ai/sdk"
+import { choice, type ChoiceQuestion, type Questions } from "@typesafe-ai/sdk"
 
 import { DISPLAYS, NONE, type ChoiceAnswer, type DecideResponse, type Decision } from "@/lib/displays"
 import { analyze, truncate, type Field, type Shape } from "@/lib/shape"
+import { errorResponse, getClient, readRequest } from "@/lib/typesafe"
 
 export const runtime = "nodejs"
-
-// Module-level client so the HTTPS connection to TypeSafe stays warm between runs.
-let client: TypeSafeClient | undefined
 
 function fieldQuestion(instructions: string, fields: Field[]): ChoiceQuestion | undefined {
   // A Choice accepts up to 255 options; one is reserved for NONE.
@@ -62,27 +60,14 @@ function buildState(shape: Shape, intent: string) {
 
 export async function POST(req: Request) {
   const t0 = performance.now()
+  const input = await readRequest(req)
+  if (input instanceof Response) return input
 
-  if (!process.env.TYPESAFE_API_KEY) {
-    return Response.json(
-      { error: "TYPESAFE_API_KEY is not set. Add it to .env.local and restart the dev server." },
-      { status: 500 },
-    )
-  }
-
-  const body = (await req.json().catch(() => null)) as { data?: unknown; intent?: string } | null
-  if (!body || !("data" in body)) {
-    return Response.json({ error: "Expected a JSON body of { data, intent }." }, { status: 400 })
-  }
-
-  const shape = analyze(body.data)
-
-  // No retries: a retried request would hide the real latency of the failed attempt.
-  client ??= new TypeSafeClient({ retry: { maxRetries: 0 }, timeout: 15_000 })
+  const shape = analyze(input.data)
 
   try {
     const t1 = performance.now()
-    const result = await client.systemOne({ state: buildState(shape, body.intent ?? ""), questions: buildQuestions(shape) })
+    const result = await getClient().systemOne({ state: buildState(shape, input.intent), questions: buildQuestions(shape) })
     const jevMs = performance.now() - t1
 
     const response: DecideResponse = {
@@ -93,10 +78,6 @@ export async function POST(req: Request) {
     }
     return Response.json(response)
   } catch (err) {
-    if (err instanceof APIError) {
-      return Response.json({ error: `TypeSafe API ${err.status}: ${err.message}` }, { status: 502 })
-    }
-    const message = err instanceof TypeSafeError ? err.message : "Unexpected error calling TypeSafe"
-    return Response.json({ error: message }, { status: 502 })
+    return errorResponse(err)
   }
 }

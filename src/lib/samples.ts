@@ -114,4 +114,91 @@ export const SAMPLES: Sample[] = [
       exclude: ["node_modules"],
     },
   },
+  {
+    id: "blog",
+    label: "Blog post",
+    intent: "",
+    data: {
+      id: "post_2026_09_16_jev",
+      slug: "picking-ui-in-100ms",
+      title: "Picking UI in 100ms: Testing Jev as a Layout Decision Engine",
+      subtitle: "What happens when the model doesn't write the UI, just chooses it",
+      status: "published",
+      published_at: "2026-09-16T10:00:00Z",
+      reading_time_minutes: 6,
+      author: {
+        name: "Martin",
+        role: "Software Developer",
+        avatar_url: "https://picsum.photos/seed/martin-avatar/96/96",
+      },
+      cover_image: {
+        url: "https://picsum.photos/seed/jev-ui-picker/1200/630",
+        alt: "Abstract dashboard layout with charts and cards",
+        width: 1200,
+        height: 630,
+      },
+      tags: ["generative-ui", "shadcn", "typesafe-ai", "performance"],
+      excerpt:
+        "Generative UI usually means an LLM streaming JSX. We tried the opposite: a small decision model that picks from components we already have, and measured how fast it decides.",
+      body: [
+        {
+          type: "paragraph",
+          text: "Most generative UI demos ask a large model to write markup. That's flexible, but slow and hard to keep on-brand. Instead, we gave TypeSafe's Jev a fixed menu of shadcn components and asked it one thing: which one fits this data?",
+        },
+        { type: "heading", text: "The setup" },
+        {
+          type: "paragraph",
+          text: "The app summarizes pasted JSON into fields, types, and example values. Jev answers every question in a single call, and the page is rendered from its answers.",
+        },
+        { type: "heading", text: "What we measured" },
+        {
+          type: "paragraph",
+          text: "Each run records the Jev call time on the server and the full browser round trip. Retries are off so slow calls aren't hidden.",
+        },
+      ],
+      cta: {
+        heading: "Try the picker on your own data",
+        text: "Paste any JSON and watch Jev choose a layout in real time.",
+        button_label: "Open the playground",
+        button_url: "https://github.com/MartinSWDev/gen-ui",
+      },
+      seo: {
+        meta_title: "Picking UI in 100ms with Jev and shadcn",
+        meta_description: "Using a fast decision model to pick shadcn components for JSON data.",
+        canonical_url: "https://example.com/blog/picking-ui-in-100ms",
+      },
+    },
+  },
+  {
+    id: "product",
+    label: "Product page",
+    intent: "",
+    data: {
+      sku: "DSK-OAK-160",
+      name: "Oak Standing Desk",
+      tagline: "Solid oak, dual motors, whisper quiet",
+      price: 749,
+      currency: "USD",
+      in_stock: true,
+      rating_percent: 92,
+      images: [
+        "https://picsum.photos/seed/oak-desk-1/800/600",
+        "https://picsum.photos/seed/oak-desk-2/800/600",
+        "https://picsum.photos/seed/oak-desk-3/800/600",
+      ],
+      description:
+        "A solid oak top on a dual-motor frame that moves from 62 to 127 cm in under 20 seconds, with four height presets and anti-collision sensing.",
+      features: ["Solid European oak top", "Dual motors, 150 kg capacity", "Four memory presets", "10-year frame warranty"],
+      specs: { width_cm: 160, depth_cm: 80, min_height_cm: 62, max_height_cm: 127, weight_kg: 54 },
+      reviews: [
+        { author: "Priya K.", rating: 5, date: "2026-08-21", comment: "Rock solid even at full height. Assembly took 40 minutes." },
+        { author: "Tom R.", rating: 4, date: "2026-07-30", comment: "Beautiful top. The controller buttons feel a bit cheap." },
+        { author: "Lena S.", rating: 5, date: "2026-07-02", comment: "Quiet motors, and the presets are a game changer." },
+      ],
+      faq: [
+        { question: "Does it ship assembled?", answer: "No. The frame ships flat and takes about 45 minutes to assemble." },
+        { question: "Can I buy the frame only?", answer: "Yes, the frame is sold separately for $429." },
+      ],
+    },
+  },
 ]

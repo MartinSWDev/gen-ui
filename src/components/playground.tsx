@@ -1,23 +1,10 @@
 "use client"
 
 import * as React from "react"
-import {
-  Braces,
-  ChartColumn,
-  ChartLine,
-  ChartPie,
-  Gauge,
-  History,
-  LayoutGrid,
-  Loader2,
-  Play,
-  Rows3,
-  Table as TableIcon,
-  Timer,
-  type LucideIcon,
-} from "lucide-react"
+import { Blocks, LayoutTemplate, Loader2, Play, Timer, type LucideIcon } from "lucide-react"
 
-import { RenderedDisplay, resolveBindings } from "@/components/rendered-display"
+import { ComposeOutput, averageConfidence, type ComposeOverrides, type ComposeResult } from "@/components/compose-output"
+import { TemplatesOutput, type TemplateResult } from "@/components/templates-output"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardAction, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
@@ -25,33 +12,46 @@ import { Input } from "@/components/ui/input"
 import { Kbd, KbdGroup } from "@/components/ui/kbd"
 import { Label } from "@/components/ui/label"
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { DISPLAYS, DISPLAY_IDS, NONE, type ChoiceAnswer, type DecideResponse, type DisplayId } from "@/lib/displays"
+import { LAYOUTS, type ComposeResponse, type LayoutId } from "@/lib/compose"
+import { DISPLAYS, type DecideResponse, type DisplayId } from "@/lib/displays"
 import { SAMPLES } from "@/lib/samples"
-import { analyze, type Shape } from "@/lib/shape"
+import { analyze } from "@/lib/shape"
 import { cn } from "@/lib/utils"
 
-const ICONS: Record<DisplayId, LucideIcon> = {
-  line_chart: ChartLine,
-  bar_chart: ChartColumn,
-  pie_chart: ChartPie,
-  stat_cards: Gauge,
-  data_table: TableIcon,
-  card_grid: LayoutGrid,
-  detail_view: Rows3,
-  timeline: History,
-  raw_json: Braces,
+type Mode = "templates" | "compose"
+
+const MODES: Record<Mode, { label: string; icon: LucideIcon; endpoint: string; summary: string; bestFor: string }> = {
+  templates: {
+    label: "Page templates",
+    icon: LayoutTemplate,
+    endpoint: "/api/decide",
+    summary:
+      "Jev picks one of 9 whole-page displays (charts, table, stat cards, card grid, timeline…) and which fields feed it. " +
+      "Always 5 questions per call, however big the JSON. Fast and predictable, but it can only draw what the templates support, so no images, buttons, or mixed content.",
+    bestFor: "Tabular data, metrics, logs, and lists of records.",
+  },
+  compose: {
+    label: "Compose",
+    icon: Blocks,
+    endpoint: "/api/compose",
+    summary:
+      "Jev picks a component for every field (heading, image, avatar, badge, button, table, rich text…), a page region for each top-level field, and the overall layout, all in one call. " +
+      "The page is assembled from those picks. The question count grows with the JSON, so use this tab to see how latency scales as the decision gets bigger.",
+    bestFor: "Content and entity JSON, such as blog posts, product pages, and profiles.",
+  },
 }
 
 const BENCH_RUNS = 10
 
-type Result = DecideResponse & { clientMs: number; shape: Shape; inputLabel: string }
-
 type Run = {
   n: number
+  mode: Mode
   inputLabel: string
-  display?: DisplayId
+  pick?: string
   confidence?: number
+  questions?: number
   jevMs?: number
   clientMs: number
   tokens?: number
@@ -67,15 +67,17 @@ function percentile(values: number[], p: number) {
 }
 
 const ms = (v: number | undefined) => (v === undefined ? "—" : `${Math.round(v)} ms`)
-const pct = (v: number) => `${Math.round(v * 100)}%`
 
 export function Playground() {
+  const [mode, setMode] = React.useState<Mode>("templates")
   const [text, setText] = React.useState(() => stringify(SAMPLES[0].data))
   const [intent, setIntent] = React.useState(SAMPLES[0].intent)
-  const [result, setResult] = React.useState<Result | null>(null)
-  const [override, setOverride] = React.useState<DisplayId | null>(null)
+  const [templateResult, setTemplateResult] = React.useState<TemplateResult | null>(null)
+  const [templateOverride, setTemplateOverride] = React.useState<DisplayId | null>(null)
+  const [composeResult, setComposeResult] = React.useState<ComposeResult | null>(null)
+  const [composeOverrides, setComposeOverrides] = React.useState<ComposeOverrides>({ picks: {} })
   const [runs, setRuns] = React.useState<Run[]>([])
-  const [error, setError] = React.useState<string | null>(null)
+  const [errors, setErrors] = React.useState<Partial<Record<Mode, string>>>({})
   const [busy, setBusy] = React.useState<null | { done: number; total: number }>(null)
   const runCount = React.useRef(0)
 
@@ -89,12 +91,12 @@ export function Playground() {
 
   const inputLabel = SAMPLES.find((s) => stringify(s.data) === text)?.label ?? "Custom JSON"
 
-  async function decideOnce(): Promise<boolean> {
+  async function decideOnce(runMode: Mode): Promise<boolean> {
     if (!parsed.ok) return false
     const n = ++runCount.current
     const t0 = performance.now()
     try {
-      const res = await fetch("/api/decide", {
+      const res = await fetch(MODES[runMode].endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: parsed.data, intent }),
@@ -103,36 +105,59 @@ export function Playground() {
       const clientMs = performance.now() - t0
       if (!res.ok) throw Object.assign(new Error(body.error ?? `HTTP ${res.status}`), { clientMs })
 
-      const r = body as DecideResponse
-      setResult({ ...r, clientMs, shape: analyze(parsed.data), inputLabel })
-      setOverride(null)
-      setError(null)
-      setRuns((prev) => [
-        {
+      let run: Run
+      if (runMode === "templates") {
+        const r = body as DecideResponse
+        setTemplateResult({ ...r, clientMs, shape: analyze(parsed.data), inputLabel })
+        setTemplateOverride(null)
+        run = {
           n,
+          mode: runMode,
           inputLabel,
-          display: r.decision.display.choice as DisplayId,
+          pick: DISPLAYS[r.decision.display.choice as DisplayId]?.label ?? r.decision.display.choice,
           confidence: r.decision.display.confidence,
+          questions: Object.keys(r.decision).length,
           jevMs: r.timing.jevMs,
           clientMs,
           tokens: r.usage.input_tokens + r.usage.output_tokens,
-        },
-        ...prev,
-      ])
+        }
+      } else {
+        const r = body as ComposeResponse
+        setComposeResult({ ...r, clientMs, data: parsed.data, inputLabel })
+        setComposeOverrides({ picks: {} })
+        const shown = r.nodes.filter((node) => node.component.choice !== "hidden").length
+        run = {
+          n,
+          mode: runMode,
+          inputLabel,
+          pick: `${LAYOUTS[r.layout.choice as LayoutId]?.label ?? r.layout.choice} · ${shown} parts`,
+          confidence: averageConfidence(r),
+          questions: r.questionCount,
+          jevMs: r.timing.jevMs,
+          clientMs,
+          tokens: r.usage.input_tokens + r.usage.output_tokens,
+        }
+      }
+      setErrors((prev) => ({ ...prev, [runMode]: undefined }))
+      setRuns((prev) => [run, ...prev])
       return true
     } catch (e) {
       const err = e as Error & { clientMs?: number }
-      setError(err.message)
-      setRuns((prev) => [{ n, inputLabel, clientMs: err.clientMs ?? performance.now() - t0, error: err.message }, ...prev])
+      setErrors((prev) => ({ ...prev, [runMode]: err.message }))
+      setRuns((prev) => [
+        { n, mode: runMode, inputLabel, clientMs: err.clientMs ?? performance.now() - t0, error: err.message },
+        ...prev,
+      ])
       return false
     }
   }
 
   async function run(times: number) {
     if (busy || !parsed.ok) return
+    const runMode = mode
     setBusy({ done: 0, total: times })
     for (let i = 0; i < times; i++) {
-      const ok = await decideOnce()
+      const ok = await decideOnce(runMode)
       setBusy({ done: i + 1, total: times })
       if (!ok) break
     }
@@ -145,36 +170,55 @@ export function Playground() {
     setIntent(sample.intent)
   }
 
-  const okRuns = runs.filter((r) => r.jevMs !== undefined)
-  const jevTimes = okRuns.map((r) => r.jevMs!)
-  const clientTimes = okRuns.map((r) => r.clientMs)
-
-  const jevPick = result?.decision.display.choice as DisplayId | undefined
-  const shown = override ?? jevPick
-  const bindings = result ? resolveBindings(result.decision, result.shape.fields) : null
+  const modeRuns = runs.filter((r) => r.mode === mode && r.jevMs !== undefined)
+  const jevTimes = modeRuns.map((r) => r.jevMs!)
+  const clientTimes = modeRuns.map((r) => r.clientMs)
+  const last = mode === "templates" ? templateResult : composeResult
+  const lastQuestions = modeRuns[0]?.questions
 
   return (
-    <div className="mx-auto flex w-full max-w-[1400px] flex-col gap-6 px-4 py-6 md:px-8 md:py-8">
+    <Tabs
+      value={mode}
+      onValueChange={(v) => setMode(v as Mode)}
+      className="mx-auto w-full max-w-[1400px] gap-6 px-4 py-6 md:px-8 md:py-8"
+    >
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-xl font-semibold tracking-tight">Jev UI picker</h1>
           <p className="text-sm text-muted-foreground">
-            Paste JSON. Jev picks the shadcn display and field bindings in one call. The app renders it.
+            Paste JSON. Jev decides how to show it in one call, and the app renders the decision with shadcn/ui.
           </p>
         </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          <Badge variant="outline" className="font-mono">{result?.model ?? "jev-latest"}</Badge>
-          <span>9 displays · 5 questions per call</span>
-        </div>
+        <Badge variant="outline" className="font-mono">{last?.model ?? "jev-latest"}</Badge>
       </header>
 
+      <div className="flex flex-col gap-3">
+        <TabsList>
+          {(Object.keys(MODES) as Mode[]).map((id) => {
+            const Icon = MODES[id].icon
+            return (
+              <TabsTrigger key={id} value={id} className="px-3">
+                <Icon />
+                {MODES[id].label}
+              </TabsTrigger>
+            )
+          })}
+        </TabsList>
+        <div className="flex max-w-4xl flex-col gap-1 text-sm">
+          <p className="text-pretty">{MODES[mode].summary}</p>
+          <p className="text-muted-foreground">
+            <span className="font-medium text-foreground">Best for:</span> {MODES[mode].bestFor}
+          </p>
+        </div>
+      </div>
+
       <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
-        {/* ---------- input column ---------- */}
+        {/* ---------- input column, shared by both tabs ---------- */}
         <div className="flex flex-col gap-6 lg:sticky lg:top-6">
           <Card>
             <CardHeader>
               <CardTitle>Input</CardTitle>
-              <CardDescription>Start from a sample or paste your own JSON.</CardDescription>
+              <CardDescription>Shared by both tabs, so you can compare them on the same JSON.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-wrap gap-1.5">
@@ -227,7 +271,7 @@ export function Playground() {
               <div className="flex gap-2">
                 <Button className="flex-1" size="lg" disabled={!parsed.ok || !!busy} onClick={() => run(1)}>
                   {busy?.total === 1 ? <Loader2 className="animate-spin" /> : <Play />}
-                  Pick display
+                  {mode === "templates" ? "Pick display" : "Compose page"}
                   <KbdGroup className="ml-1 opacity-70">
                     <Kbd className="bg-primary-foreground/15 text-primary-foreground">⌘</Kbd>
                     <Kbd className="bg-primary-foreground/15 text-primary-foreground">↵</Kbd>
@@ -243,25 +287,26 @@ export function Playground() {
 
           <Card>
             <CardHeader>
-              <CardTitle>Speed</CardTitle>
+              <CardTitle>Speed · {MODES[mode].label}</CardTitle>
               <CardDescription>
                 Jev = the TypeSafe API call, timed on the server. Round trip = browser → Next.js → TypeSafe → browser.
               </CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="grid grid-cols-2 gap-3">
-                <Metric label="Jev, last run" value={ms(result?.timing.jevMs)} large />
-                <Metric label="Round trip, last run" value={ms(result?.clientMs)} large />
+                <Metric label="Jev, last run" value={ms(last?.timing.jevMs)} large />
+                <Metric label="Round trip, last run" value={ms(last?.clientMs)} large />
               </div>
               <div className="grid grid-cols-4 gap-3 border-t pt-4">
                 <Metric label="Jev p50" value={ms(percentile(jevTimes, 50))} />
                 <Metric label="Jev p95" value={ms(percentile(jevTimes, 95))} />
                 <Metric label="Trip p50" value={ms(percentile(clientTimes, 50))} />
-                <Metric label="Runs" value={String(okRuns.length)} />
+                <Metric label="Runs" value={String(modeRuns.length)} />
               </div>
-              {result && (
+              {last && (
                 <p className="text-xs text-muted-foreground">
-                  Last call used {result.usage.input_tokens} input and {result.usage.output_tokens} output tokens.
+                  Last call asked {lastQuestions} questions and used {last.usage.input_tokens} input and{" "}
+                  {last.usage.output_tokens} output tokens.
                 </p>
               )}
             </CardContent>
@@ -270,82 +315,37 @@ export function Playground() {
 
         {/* ---------- output column ---------- */}
         <div className="flex min-w-0 flex-col gap-6">
-          {error && (
+          {errors[mode] && (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-sm text-destructive">
-              {error}
+              {errors[mode]}
             </div>
           )}
 
-          {!result ? (
-            <Card className="min-h-[420px] items-center justify-center text-center">
-              <CardContent className="flex max-w-sm flex-col items-center gap-2">
-                <LayoutGrid className="size-8 text-muted-foreground" />
-                <p className="font-medium">No decision yet</p>
-                <p className="text-sm text-muted-foreground">
-                  Pick a sample and press Pick display. Jev chooses one of {DISPLAY_IDS.length} shadcn displays, and
-                  the chosen component renders here.
-                </p>
-              </CardContent>
-            </Card>
-          ) : (
-            <>
-              <Card>
-                <CardHeader>
-                  <CardTitle>Decision</CardTitle>
-                  <CardDescription>
-                    {result.inputLabel} · click any option to render it instead
-                  </CardDescription>
-                  <CardAction>
-                    <Badge variant="secondary" className="tabular-nums">
-                      confidence {result.decision.display.confidence.toFixed(2)}
-                    </Badge>
-                  </CardAction>
-                </CardHeader>
-                <CardContent className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,300px)]">
-                  <ProbabilityList
-                    answer={result.decision.display}
-                    shown={shown!}
-                    onSelect={(id) => setOverride(id === jevPick ? null : id)}
-                  />
-                  <div className="flex flex-col gap-3">
-                    <p className="text-xs font-medium text-muted-foreground">Field bindings</p>
-                    <Binding role="Label" answer={result.decision.primary_field} />
-                    <Binding role="Value" answer={result.decision.value_field} />
-                    <Binding role="Time" answer={result.decision.time_field} />
-                    <Binding role="Badge" answer={result.decision.status_field} />
-                  </div>
-                </CardContent>
-              </Card>
+          <TabsContent value="templates" className="flex flex-col gap-6">
+            {templateResult ? (
+              <TemplatesOutput result={templateResult} override={templateOverride} onOverride={setTemplateOverride} />
+            ) : (
+              <EmptyState icon={LayoutTemplate} action="Pick display">
+                Jev will choose one of 9 shadcn displays. Try Monthly revenue, User list, or Deploy log.
+              </EmptyState>
+            )}
+          </TabsContent>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    {React.createElement(ICONS[shown!], { className: "size-4 text-muted-foreground" })}
-                    {DISPLAYS[shown!].label}
-                  </CardTitle>
-                  <CardDescription className="font-mono text-xs">{DISPLAYS[shown!].component}</CardDescription>
-                  <CardAction>
-                    {override ? (
-                      <Button size="xs" variant="outline" onClick={() => setOverride(null)}>
-                        Back to Jev’s pick
-                      </Button>
-                    ) : (
-                      <Badge variant="outline">Jev’s pick</Badge>
-                    )}
-                  </CardAction>
-                </CardHeader>
-                <CardContent>
-                  <RenderedDisplay display={shown!} shape={result.shape} bindings={bindings!} />
-                </CardContent>
-              </Card>
-            </>
-          )}
+          <TabsContent value="compose" className="flex flex-col gap-6">
+            {composeResult ? (
+              <ComposeOutput result={composeResult} overrides={composeOverrides} onOverrides={setComposeOverrides} />
+            ) : (
+              <EmptyState icon={Blocks} action="Compose page">
+                Jev will pick a component for every field and assemble a page. Try Blog post or Product page.
+              </EmptyState>
+            )}
+          </TabsContent>
 
           {runs.length > 0 && (
             <Card>
               <CardHeader>
                 <CardTitle>Run history</CardTitle>
-                <CardDescription>Newest first. Runs are sequential and never retried.</CardDescription>
+                <CardDescription>Both tabs, newest first. Runs are sequential and never retried.</CardDescription>
                 <CardAction>
                   <Button size="xs" variant="ghost" onClick={() => setRuns([])}>
                     Clear
@@ -357,8 +357,10 @@ export function Playground() {
                   <TableHeader>
                     <TableRow>
                       <TableHead className="w-10">#</TableHead>
+                      <TableHead>Tab</TableHead>
                       <TableHead>Input</TableHead>
                       <TableHead>Pick</TableHead>
+                      <TableHead className="text-right">Questions</TableHead>
                       <TableHead className="text-right">Conf.</TableHead>
                       <TableHead className="text-right">Jev</TableHead>
                       <TableHead className="text-right">Round trip</TableHead>
@@ -367,16 +369,14 @@ export function Playground() {
                   </TableHeader>
                   <TableBody className="tabular-nums">
                     {runs.slice(0, 50).map((r) => (
-                      <TableRow key={r.n}>
+                      <TableRow key={r.n} className={cn(r.mode !== mode && "text-muted-foreground")}>
                         <TableCell className="text-muted-foreground">{r.n}</TableCell>
-                        <TableCell>{r.inputLabel}</TableCell>
                         <TableCell>
-                          {r.error ? (
-                            <span className="text-destructive">Error</span>
-                          ) : (
-                            DISPLAYS[r.display!]?.label ?? r.display
-                          )}
+                          <Badge variant="outline">{MODES[r.mode].label}</Badge>
                         </TableCell>
+                        <TableCell>{r.inputLabel}</TableCell>
+                        <TableCell>{r.error ? <span className="text-destructive">Error</span> : r.pick}</TableCell>
+                        <TableCell className="text-right">{r.questions ?? "—"}</TableCell>
                         <TableCell className="text-right">{r.confidence?.toFixed(2) ?? "—"}</TableCell>
                         <TableCell className="text-right font-medium">{ms(r.jevMs)}</TableCell>
                         <TableCell className="text-right">{ms(r.clientMs)}</TableCell>
@@ -390,7 +390,7 @@ export function Playground() {
           )}
         </div>
       </div>
-    </div>
+    </Tabs>
   )
 }
 
@@ -403,58 +403,16 @@ function Metric({ label, value, large }: { label: string; value: string; large?:
   )
 }
 
-function ProbabilityList({
-  answer,
-  shown,
-  onSelect,
-}: {
-  answer: ChoiceAnswer
-  shown: DisplayId
-  onSelect: (id: DisplayId) => void
-}) {
-  const rows = DISPLAY_IDS.map((id) => ({ id, p: answer.probabilities[id] ?? 0 })).sort((a, b) => b.p - a.p)
+function EmptyState({ icon: Icon, action, children }: { icon: LucideIcon; action: string; children: React.ReactNode }) {
   return (
-    <ul className="flex flex-col gap-0.5">
-      {rows.map(({ id, p }) => {
-        const Icon = ICONS[id]
-        return (
-          <li key={id}>
-            <button
-              type="button"
-              onClick={() => onSelect(id)}
-              className={cn(
-                "grid w-full grid-cols-[1rem_7rem_minmax(0,1fr)_3rem] items-center gap-3 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-muted",
-                id === shown && "bg-muted",
-              )}
-            >
-              <Icon className="size-4 text-muted-foreground" />
-              <span className={cn("truncate", id === answer.choice && "font-medium")}>{DISPLAYS[id].label}</span>
-              <span className="h-1.5 overflow-hidden rounded-full bg-muted">
-                <span
-                  className={cn("block h-full rounded-full", id === answer.choice ? "bg-primary" : "bg-muted-foreground/40")}
-                  style={{ width: `${Math.max(p * 100, p > 0 ? 1 : 0)}%` }}
-                />
-              </span>
-              <span className="text-right text-xs tabular-nums text-muted-foreground">{pct(p)}</span>
-            </button>
-          </li>
-        )
-      })}
-    </ul>
-  )
-}
-
-function Binding({ role, answer }: { role: string; answer?: ChoiceAnswer }) {
-  const none = !answer || answer.choice === NONE
-  return (
-    <div className="flex items-center justify-between gap-3 text-sm">
-      <span className="text-muted-foreground">{role}</span>
-      <span className="flex min-w-0 items-center gap-2">
-        <code className={cn("truncate font-mono text-xs", none && "text-muted-foreground")}>
-          {answer ? answer.choice : "not asked"}
-        </code>
-        {answer && <span className="text-xs tabular-nums text-muted-foreground">{pct(answer.probabilities[answer.choice] ?? 0)}</span>}
-      </span>
-    </div>
+    <Card className="min-h-[420px] items-center justify-center text-center">
+      <CardContent className="flex max-w-sm flex-col items-center gap-2">
+        <Icon className="size-8 text-muted-foreground" />
+        <p className="font-medium">No decision yet</p>
+        <p className="text-sm text-muted-foreground">
+          Press {action}. {children}
+        </p>
+      </CardContent>
+    </Card>
   )
 }

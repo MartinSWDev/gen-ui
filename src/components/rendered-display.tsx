@@ -66,9 +66,9 @@ const compact = new Intl.NumberFormat("en", { notation: "compact", maximumFracti
 const full = new Intl.NumberFormat("en", { maximumFractionDigits: 3 })
 
 // Compact for big numbers, but keep precision for rates like 0.021.
-const formatStat = (n: number) => (Math.abs(n) >= 10_000 ? compact.format(n) : full.format(n))
+export const formatStat = (n: number) => (Math.abs(n) >= 10_000 ? compact.format(n) : full.format(n))
 
-function humanize(key: string) {
+export function humanize(key: string) {
   const s = key.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim()
   return s.charAt(0).toUpperCase() + s.slice(1)
 }
@@ -78,7 +78,7 @@ function toNumber(v: unknown) {
   return Number.isFinite(n) ? n : 0
 }
 
-function formatDate(v: string) {
+export function formatDate(v: string) {
   const d = new Date(v)
   if (Number.isNaN(d.getTime())) return v
   const hasTime = /T|\d{2}:\d{2}/.test(v)
@@ -87,7 +87,7 @@ function formatDate(v: string) {
     : /^\d{4}-\d{2}$/.test(v) ? { month: "short", year: "numeric" } : { month: "short", day: "numeric", year: "numeric" })
 }
 
-function badgeVariant(value: unknown): "default" | "secondary" | "destructive" | "outline" {
+export function badgeVariant(value: unknown): "default" | "secondary" | "destructive" | "outline" {
   const s = String(value).toLowerCase()
   if (/^(error|failed|failure|suspended|inactive|cancel+ed|critical|false|out)/.test(s)) return "destructive"
   if (/^(warn|pending|invited|draft|paused)/.test(s)) return "outline"
@@ -97,7 +97,7 @@ function badgeVariant(value: unknown): "default" | "secondary" | "destructive" |
 
 const isIdField = (name: string) => /(^|_)id$/i.test(name)
 
-function Value({ value, isStatus }: { value: unknown; isStatus?: boolean }) {
+export function Value({ value, isStatus }: { value: unknown; isStatus?: boolean }) {
   if (value === null || value === undefined || value === "") return <span className="text-muted-foreground">—</span>
   if (isStatus || typeof value === "boolean") {
     const text = typeof value === "boolean" ? (value ? "Yes" : "No") : String(value)
@@ -202,7 +202,7 @@ function StatCards({ shape, bindings }: { shape: Shape; bindings: Bindings }) {
   )
 }
 
-function DataTable({ rows, fields, status }: { rows: Row[]; fields: Field[]; status?: string }) {
+export function DataTable({ rows, fields, status }: { rows: Row[]; fields: Field[]; status?: string }) {
   return (
     <div className="overflow-hidden rounded-lg border">
       <Table>
