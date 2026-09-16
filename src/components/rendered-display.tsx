@@ -68,9 +68,17 @@ const full = new Intl.NumberFormat("en", { maximumFractionDigits: 3 })
 // Compact for big numbers, but keep precision for rates like 0.021.
 export const formatStat = (n: number) => (Math.abs(n) >= 10_000 ? compact.format(n) : full.format(n))
 
+// Unit suffixes in field names, e.g. temperature_c → "Temperature (°C)"
+const UNITS: Record<string, string> = {
+  c: "°C", f: "°F", kmh: "km/h", mph: "mph", km: "km", cm: "cm", mm: "mm", kg: "kg", ms: "ms", percent: "%", usd: "USD",
+}
+
 export function humanize(key: string) {
-  const s = key.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim()
-  return s.charAt(0).toUpperCase() + s.slice(1)
+  const unit = key.match(/_([a-z]+)$/)?.[1]
+  const base = unit && UNITS[unit] ? key.slice(0, -unit.length - 1) : key
+  const s = base.replace(/[_-]+/g, " ").replace(/([a-z])([A-Z])/g, "$1 $2").trim()
+  const label = s.charAt(0).toUpperCase() + s.slice(1)
+  return unit && UNITS[unit] ? `${label} (${UNITS[unit]})` : label
 }
 
 function toNumber(v: unknown) {

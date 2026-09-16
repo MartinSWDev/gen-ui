@@ -2,7 +2,11 @@
 
 Measures how fast [TypeSafe AI](https://typesafe.ai)'s Jev model picks a UI for arbitrary JSON.
 
-Paste JSON (or pick a sample). One Jev call chooses a display from nine shadcn/ui options (line, bar, or donut chart, stat cards, data table, card grid, detail view, timeline, raw JSON) and binds fields to roles: label, value, time, and badge. The app renders the pick and records Jev latency, round-trip latency, p50/p95, and token usage per run.
+Three tabs, each timing Jev latency, round-trip latency, and p50/p95:
+
+- **Page templates:** paste JSON, and one Jev call picks a display from nine shadcn/ui options (charts, stat cards, table, card grid, detail view, timeline, raw JSON) and binds fields to roles: label, value, time, and badge.
+- **Compose:** one Jev call picks a component for every field (heading, image, avatar, badge, button, chart, alert, rich text…), a page region for each top-level field, and a layout. The page is assembled from those picks.
+- **Live:** every 15, 30, or 60 seconds, the server fetches fresh data from a keyless public API (Open-Meteo weather, USGS earthquakes, Kraken prices, ISS position, Wikipedia edits, Hacker News), and Jev composes a page for it. The feed pauses while the browser tab is hidden and stops after 10 minutes.
 
 ## Setup
 

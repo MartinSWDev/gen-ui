@@ -1,16 +1,20 @@
 "use client"
 
 import * as React from "react"
+import { TriangleAlert } from "lucide-react"
+import { Bar, BarChart, CartesianGrid, Line, LineChart, XAxis, YAxis } from "recharts"
 
 import { DataTable, Value, badgeVariant, formatDate, formatStat, humanize } from "@/components/rendered-display"
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion"
+import { Alert, AlertTitle } from "@/components/ui/alert"
 import { AspectRatio } from "@/components/ui/aspect-ratio"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
+import { ChartContainer, ChartTooltip, ChartTooltipContent, type ChartConfig } from "@/components/ui/chart"
 import { Progress } from "@/components/ui/progress"
-import type { ComponentId, LayoutId, NodeKind, RegionId } from "@/lib/compose"
+import { kindOf, type ComponentId, type LayoutId, type NodeKind, type RegionId } from "@/lib/compose"
 import { analyze, isPlainObject, type Row } from "@/lib/shape"
 import { cn } from "@/lib/utils"
 
@@ -28,18 +32,10 @@ const IMAGE_RE = /\.(png|jpe?g|gif|webp|avif|svg)(\?|$)|picsum\.photos|images\.u
 
 const safeUrl = (v: unknown) => (typeof v === "string" && URL_RE.test(v) ? v : undefined)
 
-function kindOf(value: unknown): NodeKind | undefined {
-  if (typeof value === "string") return "text"
-  if (typeof value === "number") return "number"
-  if (typeof value === "boolean") return "boolean"
-  if (Array.isArray(value) && value.length > 0) return value.every(isPlainObject) ? "object_list" : "text_list"
-  if (isPlainObject(value)) return "object"
-}
-
 /** Used when Jev wasn't asked about a path (node cap) or picked something the value can't be. */
 function fallback(kind: NodeKind, value: unknown): ComponentId {
   if (kind === "text") return safeUrl(value) ? (IMAGE_RE.test(String(value)) ? "image" : "link") : "paragraph"
-  return ({ number: "meta", boolean: "badge", text_list: "badge_list", object: "section", object_list: "table" } as const)[kind]
+  return ({ number: "meta", boolean: "badge", text_list: "badge_list", number_list: "line_chart", object: "section", object_list: "table" } as const)[kind]
 }
 
 const join = (base: string, key: string) => (base ? `${base}.${key}` : key)
@@ -65,7 +61,7 @@ export function ComposedView({
   for (const [key, value] of Object.entries(data)) {
     const node = renderNode(value, key, key, ctx, data)
     if (!node) continue
-    const wide = kindOf(value) === "object_list"
+    const wide = kindOf(value) === "object_list" || kindOf(value) === "number_list"
     byRegion[regions[key] ?? "main"].push(
       <div key={key} className={cn(layout === "dashboard" && wide && "md:col-span-2")}>
         {node}
@@ -115,6 +111,7 @@ function renderNode(value: unknown, path: string, key: string, ctx: Ctx, sibling
     case "number":
       return <NumberNode value={value as number} fieldKey={key} component={component} ctx={ctx} />
     case "boolean":
+      if (component === "alert") return value ? <AlertNode title={humanize(key)} /> : null
       return component === "meta" ? (
         <Meta label={humanize(key)} ctx={ctx}>{value ? "Yes" : "No"}</Meta>
       ) : (
@@ -124,6 +121,17 @@ function renderNode(value: unknown, path: string, key: string, ctx: Ctx, sibling
       )
     case "text_list":
       return <TextListNode values={value as unknown[]} fieldKey={key} component={component} ctx={ctx} />
+    case "number_list": {
+      const values = value as number[]
+      if (component === "meta") return <Meta label={humanize(key)} ctx={ctx}>{values.map(formatStat).join(", ")}</Meta>
+      return (
+        <SeriesChart
+          title={humanize(key)}
+          kind={component === "bar_chart" ? "bar" : "line"}
+          points={values.map((y, i) => ({ x: seriesLabel(siblings, values.length, i), y }))}
+        />
+      )
+    }
     case "object":
       return <ObjectNode value={value as Row} path={path} fieldKey={key} component={component} ctx={ctx} />
     case "object_list":
@@ -176,6 +184,8 @@ function TextNode({
       return <p className={cn(ctx.topLevel ? "text-xl" : "text-base", ctx.tone === "compact" && "text-sm", muted)}>{value}</p>
     case "meta":
       return <Meta label={humanize(fieldKey)} ctx={ctx}>{value}</Meta>
+    case "alert":
+      return <AlertNode title={value} />
     case "badge":
       return <Badge variant={ctx.tone === "cta" ? "secondary" : badgeVariant(value)} className="w-fit">{value}</Badge>
     case "date":
@@ -352,6 +362,21 @@ function ObjectListNode({ items, path, component, ctx }: { items: Row[]; path: s
   switch (component) {
     case "rich_text":
       return <div className="flex flex-col gap-4">{items.map((block, i) => <RichBlock key={i} block={block} />)}</div>
+    case "line_chart":
+    case "bar_chart": {
+      const keys = Object.keys(items[0] ?? {})
+      const role = (k: string) => ctx.picks[join(itemPath, k)]
+      const yKey = keys.find((k) => typeof items[0][k] === "number" && role(k) !== "hidden")
+      const xKey =
+        keys.find((k) => ["heading", "subheading", "date", "code", "badge"].includes(role(k) ?? "") && typeof items[0][k] === "string") ??
+        keys.find((k) => typeof items[0][k] === "string")
+      if (!yKey) break
+      const points = items.map((item, i) => ({
+        x: xKey ? formatAxisLabel(String(item[xKey])) : String(i + 1),
+        y: Number(item[yKey]) || 0,
+      }))
+      return <SeriesChart title={humanize(yKey)} kind={component === "bar_chart" ? "bar" : "line"} points={points} />
+    }
     case "card_grid":
       return (
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
@@ -422,6 +447,59 @@ function RichBlock({ block }: { block: Row }) {
     return <ul className="ml-5 list-disc space-y-1">{block.items.map((item, i) => <li key={i}>{String(item)}</li>)}</ul>
   }
   return <p className="leading-7 text-pretty">{typeof text === "string" ? text : JSON.stringify(block)}</p>
+}
+
+function AlertNode({ title }: { title: string }) {
+  return (
+    <Alert variant="destructive">
+      <TriangleAlert />
+      <AlertTitle className="line-clamp-none">{title}</AlertTitle>
+    </Alert>
+  )
+}
+
+function SeriesChart({ title, kind, points }: { title: string; kind: "line" | "bar"; points: { x: string; y: number }[] }) {
+  const config = { y: { label: title, color: "var(--chart-1)" } } satisfies ChartConfig
+  return (
+    <div className="flex flex-col gap-2">
+      <p className="text-sm font-medium">{title}</p>
+      <ChartContainer config={config} className="aspect-auto h-48 w-full">
+        {kind === "line" ? (
+          <LineChart data={points} margin={{ left: 0, right: 8, top: 8 }}>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="x" tickLine={false} axisLine={false} tickMargin={8} minTickGap={24} />
+            <YAxis tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => formatStat(v)} />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Line dataKey="y" type="monotone" stroke="var(--color-y)" strokeWidth={2} dot={false} isAnimationActive={false} />
+          </LineChart>
+        ) : (
+          <BarChart data={points} margin={{ left: 0, right: 8, top: 8 }}>
+            <CartesianGrid vertical={false} />
+            <XAxis dataKey="x" tickLine={false} axisLine={false} tickMargin={8} minTickGap={16} />
+            <YAxis tickLine={false} axisLine={false} width={40} tickFormatter={(v: number) => formatStat(v)} />
+            <ChartTooltip content={<ChartTooltipContent />} />
+            <Bar dataKey="y" fill="var(--color-y)" radius={4} isAnimationActive={false} />
+          </BarChart>
+        )}
+      </ChartContainer>
+    </div>
+  )
+}
+
+/** Short axis labels: times become "14:00", dates become "Sep 16", long text is clipped. */
+function formatAxisLabel(v: string) {
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(v)) {
+    const d = new Date(v)
+    return Number.isNaN(d.getTime()) ? v : v.slice(11, 16)
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return formatDate(v)
+  return v.length > 14 ? `${v.slice(0, 13)}…` : v
+}
+
+/** A number series' x labels come from a sibling list of the same length, such as hourly `time`. */
+function seriesLabel(siblings: Row | undefined, length: number, i: number) {
+  const labels = siblings && Object.values(siblings).find((v) => Array.isArray(v) && v.length === length && v.every((x) => typeof x === "string"))
+  return labels ? formatAxisLabel(String((labels as string[])[i])) : String(i + 1)
 }
 
 // ---------- sibling lookups ----------

@@ -1,9 +1,10 @@
 "use client"
 
 import * as React from "react"
-import { Blocks, LayoutTemplate, Loader2, Play, Timer, type LucideIcon } from "lucide-react"
+import { Blocks, LayoutTemplate, Loader2, Play, Radio, Timer, type LucideIcon } from "lucide-react"
 
 import { ComposeOutput, averageConfidence, type ComposeOverrides, type ComposeResult } from "@/components/compose-output"
+import { LivePanel } from "@/components/live-panel"
 import { TemplatesOutput, type TemplateResult } from "@/components/templates-output"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -20,13 +21,16 @@ import { SAMPLES } from "@/lib/samples"
 import { analyze } from "@/lib/shape"
 import { cn } from "@/lib/utils"
 
-type Mode = "templates" | "compose"
+type Mode = "templates" | "compose" | "live"
+/** Tabs driven by the shared JSON input */
+type InputMode = Exclude<Mode, "live">
 
-const MODES: Record<Mode, { label: string; icon: LucideIcon; endpoint: string; summary: string; bestFor: string }> = {
+const ENDPOINTS: Record<InputMode, string> = { templates: "/api/decide", compose: "/api/compose" }
+
+const MODES: Record<Mode, { label: string; icon: LucideIcon; summary: string; bestFor: string }> = {
   templates: {
     label: "Page templates",
     icon: LayoutTemplate,
-    endpoint: "/api/decide",
     summary:
       "Jev picks one of 9 whole-page displays (charts, table, stat cards, card grid, timeline…) and which fields feed it. " +
       "Always 5 questions per call, however big the JSON. Fast and predictable, but it can only draw what the templates support, so no images, buttons, or mixed content.",
@@ -35,11 +39,18 @@ const MODES: Record<Mode, { label: string; icon: LucideIcon; endpoint: string; s
   compose: {
     label: "Compose",
     icon: Blocks,
-    endpoint: "/api/compose",
     summary:
       "Jev picks a component for every field (heading, image, avatar, badge, button, table, rich text…), a page region for each top-level field, and the overall layout, all in one call. " +
       "The page is assembled from those picks. The question count grows with the JSON, so use this tab to see how latency scales as the decision gets bigger.",
     bestFor: "Content and entity JSON, such as blog posts, product pages, and profiles.",
+  },
+  live: {
+    label: "Live",
+    icon: Radio,
+    summary:
+      "Every 15, 30, or 60 seconds the server pulls fresh data from a free public API (weather, earthquakes, crypto prices, the ISS, Wikipedia edits, Hacker News) and Jev composes a new page for it. " +
+      "Rotate through all sources and the data changes shape on every update, so the layout has to adapt. Timings separate the data fetch from Jev's decision.",
+    bestFor: "Showing off speed and adaptability on real, changing data.",
   },
 }
 
@@ -47,7 +58,7 @@ const BENCH_RUNS = 10
 
 type Run = {
   n: number
-  mode: Mode
+  mode: InputMode
   inputLabel: string
   pick?: string
   confidence?: number
@@ -91,12 +102,12 @@ export function Playground() {
 
   const inputLabel = SAMPLES.find((s) => stringify(s.data) === text)?.label ?? "Custom JSON"
 
-  async function decideOnce(runMode: Mode): Promise<boolean> {
+  async function decideOnce(runMode: InputMode): Promise<boolean> {
     if (!parsed.ok) return false
     const n = ++runCount.current
     const t0 = performance.now()
     try {
-      const res = await fetch(MODES[runMode].endpoint, {
+      const res = await fetch(ENDPOINTS[runMode], {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ data: parsed.data, intent }),
@@ -153,7 +164,7 @@ export function Playground() {
   }
 
   async function run(times: number) {
-    if (busy || !parsed.ok) return
+    if (busy || !parsed.ok || mode === "live") return
     const runMode = mode
     setBusy({ done: 0, total: times })
     for (let i = 0; i < times; i++) {
@@ -212,13 +223,18 @@ export function Playground() {
         </div>
       </div>
 
-      <div className="grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]">
+      {/* Kept mounted so the feed and its history survive tab switches; it only ticks while visible. */}
+      <TabsContent value="live" forceMount className="data-[state=inactive]:hidden">
+        <LivePanel active={mode === "live"} />
+      </TabsContent>
+
+      <div className={cn("grid items-start gap-6 lg:grid-cols-[minmax(0,420px)_minmax(0,1fr)]", mode === "live" && "hidden")}>
         {/* ---------- input column, shared by both tabs ---------- */}
         <div className="flex flex-col gap-6 lg:sticky lg:top-6">
           <Card>
             <CardHeader>
               <CardTitle>Input</CardTitle>
-              <CardDescription>Shared by both tabs, so you can compare them on the same JSON.</CardDescription>
+              <CardDescription>Shared by Page templates and Compose, so you can compare them on the same JSON.</CardDescription>
             </CardHeader>
             <CardContent className="flex flex-col gap-4">
               <div className="flex flex-wrap gap-1.5">
@@ -345,7 +361,7 @@ export function Playground() {
             <Card>
               <CardHeader>
                 <CardTitle>Run history</CardTitle>
-                <CardDescription>Both tabs, newest first. Runs are sequential and never retried.</CardDescription>
+                <CardDescription>Page templates and Compose runs, newest first. Runs are sequential and never retried.</CardDescription>
                 <CardAction>
                   <Button size="xs" variant="ghost" onClick={() => setRuns([])}>
                     Clear

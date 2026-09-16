@@ -4,7 +4,7 @@
 import type { ChoiceAnswer } from "@/lib/displays"
 import { isPlainObject } from "@/lib/shape"
 
-export type NodeKind = "text" | "number" | "boolean" | "text_list" | "object" | "object_list"
+export type NodeKind = "text" | "number" | "boolean" | "text_list" | "number_list" | "object" | "object_list"
 
 export type ComposeNode = {
   /** Dotted path; array items share a template path, e.g. "body[].text" */
@@ -18,7 +18,7 @@ export type ComposeNode = {
 
 type ComponentSpec = { label: string; kinds: readonly NodeKind[]; description: string }
 
-const ALL_KINDS = ["text", "number", "boolean", "text_list", "object", "object_list"] as const
+const ALL_KINDS = ["text", "number", "boolean", "text_list", "number_list", "object", "object_list"] as const
 
 // Descriptions are sent to Jev as Choice criteria. Only the components that
 // can render a node's kind are offered for that node.
@@ -28,8 +28,13 @@ export const COMPONENTS = {
   paragraph: { label: "Paragraph", kinds: ["text"], description: "Readable prose: body text, a summary, or an excerpt" },
   meta: {
     label: "Meta text",
-    kinds: ["text", "number", "boolean", "text_list"],
+    kinds: ["text", "number", "boolean", "text_list", "number_list"],
     description: "Small supporting detail a reader may glance at, such as reading time or a count",
+  },
+  alert: {
+    label: "Alert",
+    kinds: ["text", "boolean"],
+    description: "An important warning the reader must not miss, such as a safety, outage, or severe weather notice",
   },
   badge: { label: "Badge", kinds: ["text", "boolean"], description: "A short status, category, or label worth highlighting" },
   date: { label: "Date", kinds: ["text"], description: "A date or timestamp" },
@@ -47,6 +52,16 @@ export const COMPONENTS = {
   badge_list: { label: "Badge list", kinds: ["text_list"], description: "Tags or categories shown as badges" },
   bullet_list: { label: "Bullet list", kinds: ["text_list"], description: "Several points or features shown as bullets" },
   gallery: { label: "Gallery", kinds: ["text_list"], description: "Several image URLs shown as a gallery" },
+  line_chart: {
+    label: "Line chart",
+    kinds: ["number_list", "object_list"],
+    description: "Numbers that change over time or in sequence, shown as a line",
+  },
+  bar_chart: {
+    label: "Bar chart",
+    kinds: ["number_list", "object_list"],
+    description: "Numbers compared across a handful of items, shown as bars",
+  },
   section: { label: "Section", kinds: ["object"], description: "A group of related fields shown together, each rendered on its own" },
   card: { label: "Card", kinds: ["object"], description: "A self-contained group of fields shown inside a bordered card" },
   cta: {
@@ -114,13 +129,14 @@ export type ComposeResponse = {
 const MAX_DEPTH = 4
 export const MAX_NODES = 120
 
-function kindOf(value: unknown): NodeKind | undefined {
+export function kindOf(value: unknown): NodeKind | undefined {
   if (typeof value === "string") return "text"
   if (typeof value === "number") return "number"
   if (typeof value === "boolean") return "boolean"
   if (Array.isArray(value)) {
     if (value.length === 0) return undefined
     if (value.every(isPlainObject)) return "object_list"
+    if (value.every((v) => typeof v === "number")) return "number_list"
     if (value.every((v) => !isPlainObject(v) && !Array.isArray(v))) return "text_list"
     return undefined
   }
