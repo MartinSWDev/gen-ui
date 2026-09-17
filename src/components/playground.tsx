@@ -22,29 +22,13 @@ import { SAMPLES } from "@/lib/samples"
 import { analyze } from "@/lib/shape"
 import { cn } from "@/lib/utils"
 
-type Mode = "ask" | "templates" | "compose" | "live"
+type Mode = "compose" | "live" | "ask" | "templates"
 /** Tabs driven by the shared JSON input */
 type InputMode = Exclude<Mode, "ask" | "live">
 
 const ENDPOINTS: Record<InputMode, string> = { templates: "/api/decide", compose: "/api/compose" }
 
 const MODES: Record<Mode, { label: string; icon: LucideIcon; summary: string; bestFor: string }> = {
-  ask: {
-    label: "Ask",
-    icon: Sparkles,
-    summary:
-      "Ask a question about live weather or crypto data and Jev redesigns the page to answer it as you type: which fields to show and how, what to focus on, how to sort, and the colour theme. " +
-      "Every answer is a single Jev call over the same data, and only the question changes.",
-    bestFor: "Seeing decision speed you can feel. Click the suggestions or type your own question.",
-  },
-  templates: {
-    label: "Page templates",
-    icon: LayoutTemplate,
-    summary:
-      "Jev picks one of 9 whole-page displays (charts, table, stat cards, card grid, timeline…) and which fields feed it. " +
-      "Always 5 questions per call, however big the JSON. Fast and predictable, but it can only draw what the templates support, so no images, buttons, or mixed content.",
-    bestFor: "Tabular data, metrics, logs, and lists of records.",
-  },
   compose: {
     label: "Compose",
     icon: Blocks,
@@ -60,6 +44,22 @@ const MODES: Record<Mode, { label: string; icon: LucideIcon; summary: string; be
       "Every 15, 30, or 60 seconds the server pulls fresh data from a free public API (weather, earthquakes, crypto prices, the ISS, Wikipedia edits, Hacker News) and Jev composes a new page for it. " +
       "Rotate through all sources and the data changes shape on every update, so the layout has to adapt. Timings separate the data fetch from Jev's decision.",
     bestFor: "Showing off speed and adaptability on real, changing data.",
+  },
+  ask: {
+    label: "Ask",
+    icon: Sparkles,
+    summary:
+      "Ask a question about live weather or crypto data and Jev redesigns the page to answer it as you type: which fields to show and how, what to focus on, how to sort, and the colour theme. " +
+      "Every answer is a single Jev call over the same data, and only the question changes.",
+    bestFor: "Seeing decision speed you can feel. Click the suggestions or type your own question.",
+  },
+  templates: {
+    label: "Page templates",
+    icon: LayoutTemplate,
+    summary:
+      "Jev picks one of 9 whole-page displays (charts, table, stat cards, card grid, timeline…) and which fields feed it. " +
+      "Always 5 questions per call, however big the JSON. Fast and predictable, but it can only draw what the templates support, so no images, buttons, or mixed content.",
+    bestFor: "Tabular data, metrics, logs, and lists of records.",
   },
 }
 
@@ -89,7 +89,7 @@ function percentile(values: number[], p: number) {
 const ms = (v: number | undefined) => (v === undefined ? "—" : `${Math.round(v)} ms`)
 
 export function Playground() {
-  const [mode, setMode] = React.useState<Mode>("ask")
+  const [mode, setMode] = React.useState<Mode>("compose")
   const [text, setText] = React.useState(() => stringify(SAMPLES[0].data))
   const [intent, setIntent] = React.useState(SAMPLES[0].intent)
   const [templateResult, setTemplateResult] = React.useState<TemplateResult | null>(null)
